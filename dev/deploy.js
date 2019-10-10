@@ -1,33 +1,43 @@
-#!/usr/bin/env node
+'use strict';
 
-const shell = require( 'shelljs' );
-const NodeSSH = require( 'node-ssh' );
+/* eslint-env node */
+
 const path = require( 'path' );
+const deploy = require( '@oskarwrobel/deploy-tools/src/deploy' );
 
-const ssh = new NodeSSH();
+const domain = 'blackwidow.pl';
+const dest = `domains/${ domain }/public_html`;
+const tmp = `domains/${ domain }/tmp`;
 
-const dest = 'domains/blackwidow.pl';
-const localTmp = path.join( process.cwd(), 'dist' );
-const remoteTmp = path.join( dest, 'tmp' );
+const username = process.env.MYDEVIL_USERNAME;
+const host = process.env.MYDEVIL_HOST;
+const privateKey = process.env.MYDEVIL_KEY;
 
-// Build app.
-shell.exec( 'rm -rf ' + path.join( process.cwd(), 'dist' ) );
-shell.exec( 'npm run build:production' );
+deploy( {
+	username,
+	host,
+	privateKey,
+	execute( local, remote ) {
+		local( 'npm run build:production' );
 
-// Copying files to the remote.
-shell.exec( `rsync -a ${ path.join( localTmp, '/' ) } oskarwrobel@s8.mydevil.net:${ remoteTmp }` );
+		// Create directory structure if it is missing.
+		tmp.split( '/' ).reduce( ( result, part ) => {
+			result = path.join( result, part );
+			remote( `mkdir ${ result }`, { silent: true } );
 
-ssh.connect( {
-	host: 's8.mydevil.net',
-	username: 'oskarwrobel',
-	privateKey: '/Users/oskarwrobel/.ssh/id_rsa'
+			return result;
+		}, '' );
+
+		local( `rsync -a ${ path.join( process.cwd(), 'dist', '/' ) } ${ username }@${ host }:${ tmp }` );
+
+		remote( `rm -rf ${ dest }` );
+		remote( `mv ${ tmp } ${ dest }` );
+	}
 } )
-	.then( ssh => {
-		return Promise.resolve()
-			.then( () => ssh.execCommand( `rm -rf ${ path.join( dest, 'public_html' ) }` ) )
-			.then( output => console.log( output.stdout, output.stderr ) )
-			.then( () => ssh.execCommand( `mv ${ path.join( dest, 'tmp' ) } ${ path.join( dest, 'public_html' ) }` ) )
-			.then( output => console.log( output.stdout, output.stderr ) )
-			.then( () => ssh.connection.end() );
+	.then( () => {
+		console.log( 'Deployed.' );
 	} )
-	.catch( err => console.log( err ) );
+	.catch( err => {
+		console.log( err );
+		process.exit( 1 );
+	} );
